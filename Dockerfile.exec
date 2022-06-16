@@ -2,6 +2,8 @@ FROM golang:latest AS build
 
 WORKDIR /go/judge
 
+ENV GOPROXY=https://goproxy.cn
+
 COPY go.mod go.sum /go/judge/
 
 RUN go mod download -x
@@ -11,11 +13,37 @@ COPY ./ /go/judge
 RUN go generate ./cmd/executorserver/version \
     && CGO_ENABLE=0 go build -v -tags nomsgpack -o executorserver ./cmd/executorserver 
 
-FROM debian:latest
+FROM ubuntu:18.04
 
-WORKDIR /opt
+ARG DEBIAN_FRONTEND=noninteractive
+RUN  sed -i s@/archive.ubuntu.com/@/mirrors.aliyun.com/@g /etc/apt/sources.list
+RUN  sed -i s@/security.ubuntu.com/@/mirrors.aliyun.com/@g /etc/apt/sources.list
 
-COPY --from=build /go/judge/executorserver /go/judge/mount.yaml /opt/
+RUN  apt-get clean
+ENV TZ=Asia/Shanghai
+
+RUN buildDeps='software-properties-common libtool wget unzip' && \
+    apt-get update && apt-get install -y python python3.7 gcc g++ mono-devel $buildDeps curl bash && \
+    add-apt-repository ppa:openjdk-r/ppa && add-apt-repository ppa:longsleep/golang-backports && \
+	sed -i 's@/http://ppa.launchpad.net/@/launchpad.proxy.ustclug.org/@g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list && \
+	sed -ri 's#(.*http)(://launchpad.proxy.ustclug.org.*)#\1s\2#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list && \
+	apt-get update && apt-get install -y golang-go openjdk-8-jdk && \
+	add-apt-repository ppa:pypy/ppa && apt-get update && apt install -y pypy pypy3 && \
+	add-apt-repository ppa:ondrej/php && apt-get update && apt-get install -y php7.3-cli && \
+	cd /tmp && wget -O jsv8.zip  https://storage.googleapis.com/chromium-v8/official/canary/v8-linux64-dbg-8.4.109.zip && \
+	unzip -d /usr/bin/jsv8 jsv8.zip && rm -rf /tmp/jsv8.zip && \
+	curl -fsSL https://deb.nodesource.com/setup_14.x | bash && \
+	apt-get install -y nodejs && \
+    apt-get purge -y --auto-remove $buildDeps && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /judge/test_case /judge/run /judge/spj /judge/log
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+WORKDIR /judge/server
+
+COPY --from=build /go/judge/executorserver /go/judge/mount.yaml /judge/server/
 
 EXPOSE 5050/tcp 5051/tcp
 
